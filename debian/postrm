@@ -1,0 +1,19 @@
+#!/bin/sh
+# Remove only the path alias created by the fix, without deleting user data.
+set -e
+case "${1:-}" in
+    remove|purge)
+        marker_dir='/var/jb/var/lib/com.551uk.smartnotificationsfix'
+        old='/var/jb/Application Support/SmartNotifications-plist'
+        correct='/var/jb/Library/Application Support/SmartNotifications-plist'
+        if [ -f "$marker_dir/created-alias" ]; then
+            if [ -L "$old" ] && [ "$(readlink "$old")" = "$correct" ]; then
+                rm -f "$old"
+            fi
+            rm -f "$marker_dir/created-alias"
+            rmdir "$marker_dir" 2>/dev/null || true
+            rmdir '/var/jb/Application Support' 2>/dev/null || true
+        fi
+        ;;
+esac
+exit 0
