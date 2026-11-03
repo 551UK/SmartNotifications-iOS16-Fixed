@@ -1,0 +1,5 @@
+# Keep the original paid package and locally merged binaries out of this repository.
+*.deb
+dist/
+*.zip
+.DS_Store
