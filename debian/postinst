@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+case "${1:-configure}" in
+    configure|triggered)
+        /var/jb/usr/libexec/smartnotificationsios16-fixed/repair
+        ;;
+esac
+exit 0
