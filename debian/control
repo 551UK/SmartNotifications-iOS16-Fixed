@@ -1,0 +1,12 @@
+Package: smartnotificationsios16
+Name: SmartNotifications iOS16 Fixed
+Version: 1.0.1
+Architecture: iphoneos-arm64
+Section: Tweaks
+Maintainer: 551UK
+Author: EliasSfeir (original tweak); 551UK (preference fixes)
+Depends: com.spark.libsparkapplist
+Conflicts: com.551uk.smartnotificationsfix
+Replaces: com.551uk.smartnotificationsfix
+Description: SmartNotifications iOS16 with automatic fixes for settings not saving, folder permissions and the All Apps preference path.
+Icon: https://media.havoc.app/65f32f8428a3821cef7b63bd
