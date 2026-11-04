@@ -1,0 +1,83 @@
+name: Build combined SmartNotifications DEB and publish Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      original_deb_url:
+        description: "Authorized download URL of original SmartNotifications iOS16 v1.0 DEB"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  combine-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ORIGINAL_DEB_URL: ${{ inputs.original_deb_url || secrets.SMARTNOTIFICATIONS_ORIGINAL_DEB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify original package is accessible
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${ORIGINAL_DEB_URL:-}" ]]; then
+            echo "::error::An original DEB URL is required. Set SMARTNOTIFICATIONS_ORIGINAL_DEB_URL or supply the workflow input."
+            exit 1
+          fi
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --silent --show-error --output original.deb "$ORIGINAL_DEB_URL"
+          echo '74959924fb5eeac098fb7a7a51fd3d3295a646dd04d96349d9f2773d79ae9ef2  original.deb' | sha256sum -c -
+          test "$(dpkg-deb -f original.deb Package)" = smartnotificationsios16
+          test "$(dpkg-deb -f original.deb Architecture)" = iphoneos-arm64
+          test "$(dpkg-deb -f original.deb Version)" = 1.0
+
+      - name: Build one merged rootless DEB
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh scripts/build.sh original.deb dist
+          pkg=dist/SmartNotifications-iOS16-Fixed_1.0.1_iphoneos-arm64.deb
+          test -s "$pkg"
+          test "$(dpkg-deb -f "$pkg" Package)" = smartnotificationsios16
+          test "$(dpkg-deb -f "$pkg" Version)" = 1.0.1
+          test "$(dpkg-deb -f "$pkg" Architecture)" = iphoneos-arm64
+          dpkg-deb -x original.deb original-check
+          dpkg-deb -x "$pkg" merged-check
+          python3 - <<'PY'
+          from pathlib import Path
+          a, b = Path('original-check'), Path('merged-check')
+          original_files = sorted(p.relative_to(a) for p in a.rglob('*') if p.is_file())
+          assert original_files, 'Original package has no files'
+          for relative in original_files:
+              assert (b / relative).is_file(), f'Missing original payload: {relative}'
+              assert (b / relative).read_bytes() == (a / relative).read_bytes(), f'Changed original payload: {relative}'
+          repair = b/'var/jb/usr/libexec/smartnotificationsios16-fixed/repair'
+          assert repair.is_file()
+          print(f'PASS: {len(original_files)} original payload files retained and separate repair included')
+          PY
+
+      - name: Publish single DEB to existing DEB release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=DEB
+          pkg=dist/SmartNotifications-iOS16-Fixed_1.0.1_iphoneos-arm64.deb
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$pkg" --clobber
+          else
+            gh release create "$tag" "$pkg" --target "$GITHUB_SHA" \
+              --title "SmartNotifications iOS16 Fixed" --notes ""
+          fi
+          name="$(basename "$pkg")"
+          while IFS= read -r asset; do
+            if [[ -n "$asset" && "$asset" != "$name" ]]; then
+              gh release delete-asset "$tag" "$asset" --yes
+            fi
+          done < <(gh release view "$tag" --json assets --jq '.assets[].name')
+          gh release edit "$tag" --title "SmartNotifications iOS16 Fixed" --notes ""
