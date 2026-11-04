@@ -1,6 +1,10 @@
 name: Build combined SmartNotifications DEB and publish Release
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'input/smartnotificationsios16_v1.0_iphoneos-arm64.deb'
   workflow_dispatch:
     inputs:
       original_deb_url:
@@ -24,12 +28,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${ORIGINAL_DEB_URL:-}" ]]; then
-            echo "::error::An original DEB URL is required. Set SMARTNOTIFICATIONS_ORIGINAL_DEB_URL or supply the workflow input."
+          if [[ -f input/smartnotificationsios16_v1.0_iphoneos-arm64.deb ]]; then
+            cp input/smartnotificationsios16_v1.0_iphoneos-arm64.deb original.deb
+          elif [[ -n "${ORIGINAL_DEB_URL:-}" ]]; then
+            curl --fail --location --retry 3 --retry-delay 2 \
+              --silent --show-error --output original.deb "$ORIGINAL_DEB_URL"
+          else
+            echo "::error::Upload input/smartnotificationsios16_v1.0_iphoneos-arm64.deb or supply an authorized original_deb_url."
             exit 1
           fi
-          curl --fail --location --retry 3 --retry-delay 2 \
-            --silent --show-error --output original.deb "$ORIGINAL_DEB_URL"
           echo '74959924fb5eeac098fb7a7a51fd3d3295a646dd04d96349d9f2773d79ae9ef2  original.deb' | sha256sum -c -
           test "$(dpkg-deb -f original.deb Package)" = smartnotificationsios16
           test "$(dpkg-deb -f original.deb Architecture)" = iphoneos-arm64
