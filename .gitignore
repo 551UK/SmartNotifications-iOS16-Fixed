@@ -1,5 +1,6 @@
-# Keep the original paid package and locally merged binaries out of this repository.
+# Ignore locally generated merged packages.
 *.deb
+!input/smartnotificationsios16_v1.0_iphoneos-arm64.deb
 dist/
 *.zip
 .DS_Store
