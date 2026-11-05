@@ -44,5 +44,34 @@ jobs:
               strings -a -t x "$file" | grep -Ei -C 2 'fakenoti|fakenotification|fake.?notification|silent.?mode|forcesound|sound.?enabled|enabled.?sound|swipe|respring|snooze|no.?sender|remove.?manage|block.?word|enable|prefs|notify' | head -n 470 || true
             fi
           done
+          echo '==== MACHO EXPORTED SYMBOLS AND CLASSES ===='
+          for f in audit/pkg/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib audit/pkg/var/jb/Library/PreferenceBundles/SmartNotifications.bundle/SmartNotifications; do
+            echo "== $f =="
+            file "$f"
+            command -v llvm-objdump || true
+            command -v llvm-nm || true
+            llvm-objdump --macho --syms "$f" 2>&1 | grep -Ei 'fake|noti|volume|bulletin|preference|misc|sound|ringer|mute|switch|objc_class|\[|_\
+          find audit/pkg -type f \( -name '*.plist' -o -name '*.strings' \) -printf '%p\n' | head -n 200
+ | head -n 350 || true
+            echo '-- all methods/properties containing toggle or notify --'
+            strings -a -t x "$f" | grep -Ei 'fake|swipe|ringer|mute|sound|disable|notification|volume|disabled|status|press|firstValue|secondValue|thirdValue|fourthValue|fifthValue|sixthValue|MiscSettings|plist|Preferences' | head -n 400 || true
+          done
+          echo '==== OBJC CLASS / SELECTOR / IMPORT METADATA ===='
+          python3 -m pip install --quiet lief capstone
+          python3 - <<'PY'
+          import lief
+          p='audit/pkg/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib'
+          m=lief.parse(p)
+          print('format',m.format,'arch',m.header.cpu_type)
+          print('sections',[(s.name,hex(s.virtual_address),len(s.content)) for s in m.sections])
+          print('symbol count',len(m.symbols))
+          for s in m.symbols:
+              if any(x in s.name.lower() for x in ('notification','volume','bulletin','fake','silent','mute','prefs','springboard','message','sound','ringer','objc_class_$_','objc_metaclass')):
+                  print('SYMBOL',hex(s.value),s.name)
+          for lib in m.libraries: print('LIB',lib.name)
+          try:
+              print('objc metadata', m.objc_metadata)
+          except Exception as e: print('objc metadata unsupported',str(e))
+          PY
           echo '==== CONTROL / FILTER BUNDLE DATA ===='
           find audit/pkg -type f \( -name '*.plist' -o -name '*.strings' \) -printf '%p\n' | head -n 200
