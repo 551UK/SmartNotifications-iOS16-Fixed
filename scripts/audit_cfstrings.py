@@ -16,12 +16,12 @@ for m in fat:
         b=read(va,32)
         if len(b)<32: continue
         q=struct.unpack('<QQQQ',b)
-        raw=read(q[2],q[3])
+        raw=read(q[2] & 0xffffffff, q[3])
         if len(raw)==q[3] and q[3]<1000:
             t=raw.decode('utf-8','replace')
         else:
             t='?'
-        print(hex(va),'ptr',hex(q[2]),'len',q[3],repr(t))
+        print(hex(va),'ptr',hex(q[2] & 0xffffffff),'len',q[3],repr(t))
     text=next(s for s in secs if s.name=='__text')
     cs=capstone.Cs(capstone.CS_ARCH_ARM64,capstone.CS_MODE_ARM)
     print('CALLERS OF sendBulletin')
