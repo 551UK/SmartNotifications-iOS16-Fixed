@@ -121,8 +121,19 @@ def patch_slice(raw,off,size,test_only):
     skip:
       ret
     """
-    body=assemble(source,CAVE_VA)
+    body=bytearray(assemble(source,CAVE_VA))
     assert len(body)<0x100 and len(body)%4==0
+    # Keystone interprets ADR hash immediates as relative offsets. Encode absolute
+    # CFString references explicitly using ARM64's PC-relative ADR layout.
+    adr_sites=[i for i in instructions(body,CAVE_VA) if i.mnemonic=='adr']
+    assert len(adr_sites)==2,'Expected exactly two CFString reference instructions'
+    for insn,target in zip(adr_sites,(x['prefs_cf'],x['toggle_cf'])):
+        delta=target-insn.address
+        assert -(1<<20)<=delta<(1<<20)
+        word=0x10000002 | ((delta&3)<<29) | (((delta>>2)&0x7ffff)<<5)
+        off=insn.address-CAVE_VA
+        body[off:off+4]=struct.pack('<I',word)
+    body=bytes(body)
     ins=instructions(body,CAVE_VA)
     assert len(ins)*4==len(body), 'Invalid disassembly'
     assert ins[-3].mnemonic=='nop' and ins[-2].mnemonic=='b' and ins[-1].mnemonic=='ret'
