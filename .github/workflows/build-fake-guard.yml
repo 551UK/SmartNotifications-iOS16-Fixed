@@ -1,0 +1,121 @@
+name: Build and publish SmartNotifications Fake Notifications fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'fix/**'
+      - 'scripts/build-guard.sh'
+      - '.github/workflows/build-fake-guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compile:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit test toggle guard on macOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx clang -fobjc-arc -DSMARTNOTIFICATIONS_TEST \
+            -framework Foundation -o /tmp/SmartNotificationsGuardTests \
+            fix/FakeNotificationGuard.m fix/GuardTests.m
+          /tmp/SmartNotificationsGuardTests
+
+      - name: Compile and sign iOS rootless guard (arm64 + arm64e)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p compiled
+          xcrun --sdk iphoneos clang -fobjc-arc -arch arm64 -arch arm64e \
+            -miphoneos-version-min=15.0 -dynamiclib \
+            -Wl,-install_name,/Library/MobileSubstrate/DynamicLibraries/zzSmartNotificationsFakeGuard.dylib \
+            -framework Foundation -o compiled/zzSmartNotificationsFakeGuard.dylib \
+            fix/FakeNotificationGuard.m
+          codesign -f -s - --timestamp=none compiled/zzSmartNotificationsFakeGuard.dylib
+          codesign --verify -v compiled/zzSmartNotificationsFakeGuard.dylib
+          lipo -info compiled/zzSmartNotificationsFakeGuard.dylib
+          nm -arch arm64 compiled/zzSmartNotificationsFakeGuard.dylib | grep SNShouldSuppressFakeNotification
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-guard
+          path: compiled/zzSmartNotificationsFakeGuard.dylib
+          if-no-files-found: error
+          retention-days: 3
+
+  package-and-release:
+    needs: compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-guard
+          path: compiled
+
+      - name: Verify source and build exactly one merged package
+        shell: bash
+        run: |
+          set -euo pipefail
+          orig=input/smartnotificationsios16_v1.0_iphoneos-arm64.deb
+          echo '74959924fb5eeac098fb7a7a51fd3d3295a646dd04d96349d9f2773d79ae9ef2  '${orig} | sha256sum -c -
+          test "$(dpkg-deb -f "$orig" Package)" = "smartnotificationsios16"
+          mkdir -p verify/orig verify/result
+          dpkg-deb -x "$orig" verify/orig
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('verify/orig/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib')
+          b = p.read_bytes()
+          assert b'_Z12sendBulletinP8NSStringS0_S0_' in b, 'original function symbol is missing'
+          print('PASS: target notification sender symbol exists')
+          PY
+          sh scripts/build-guard.sh "$orig" compiled/zzSmartNotificationsFakeGuard.dylib dist
+          pkg=dist/SmartNotifications-iOS16-Fixed_1.0.2_iphoneos-arm64.deb
+          test "$(dpkg-deb -f "$pkg" Version)" = "1.0.2"
+          test "$(dpkg-deb -f "$pkg" Package)" = "smartnotificationsios16"
+          test "$(dpkg-deb -f "$pkg" Architecture)" = "iphoneos-arm64"
+          dpkg-deb -x "$pkg" verify/result
+          python3 - <<'PY'
+          from pathlib import Path
+          a,b=Path('verify/orig'),Path('verify/result')
+          for f in a.rglob('*'):
+              if f.is_file():
+                  rel=f.relative_to(a)
+                  assert (b/rel).is_file(), 'Missing original file: '+str(rel)
+                  assert (b/rel).read_bytes()==f.read_bytes(), 'Modified original file: '+str(rel)
+          lib=b/'var/jb/Library/MobileSubstrate/DynamicLibraries/zzSmartNotificationsFakeGuard.dylib'
+          filt=b/'var/jb/Library/MobileSubstrate/DynamicLibraries/zzSmartNotificationsFakeGuard.plist'
+          repair=b/'var/jb/usr/libexec/smartnotificationsios16-fixed/repair'
+          assert lib.is_file() and filt.is_file() and repair.is_file()
+          assert lib.stat().st_size>1000
+          print('PASS: original payload unmodified, settings repair and fake guard both present')
+          PY
+
+      - name: Replace single DEB in existing release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=DEB
+          pkg=dist/SmartNotifications-iOS16-Fixed_1.0.2_iphoneos-arm64.deb
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$pkg" --clobber
+          else
+            gh release create "$tag" "$pkg" --target "$GITHUB_SHA" --title "SmartNotifications iOS16 Fixed" --notes ""
+          fi
+          name="$(basename "$pkg")"
+          while IFS= read -r asset; do
+            if [[ -n "$asset" && "$asset" != "$name" ]]; then
+              gh release delete-asset "$tag" "$asset" --yes
+            fi
+          done < <(gh release view "$tag" --json assets --jq '.assets[].name')
+          gh release edit "$tag" --title "SmartNotifications iOS16 Fixed" --notes ""
