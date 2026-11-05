@@ -1,64 +1,22 @@
-name: Audit SmartNotifications binary and switches
-
+name: Inspect SmartNotifications toggle and runtime
 on:
+  workflow_dispatch:
   push:
     paths:
       - '.github/workflows/audit.yml'
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   audit:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect tweak binaries and switches
+      - name: Decode original compiled toggle code
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p audit/pkg
           dpkg-deb -R input/smartnotificationsios16_v1.0_iphoneos-arm64.deb audit/pkg
-          echo '==== ALL PACKAGE FILES ===='
-          find audit/pkg -type f -printf '%p %s bytes\n' | sort
-          echo '==== MACHO EXPORTED SYMBOLS AND CLASSES ===='
-          for f in audit/pkg/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib audit/pkg/var/jb/Library/PreferenceBundles/SmartNotifications.bundle/SmartNotifications; do
-            echo "== $f =="
-            file "$f"
-            command -v llvm-objdump || true
-            command -v llvm-nm || true
-            llvm-objdump --macho --syms "$f" 2>&1 | grep -Ei 'fake|noti|volume|bulletin|preference|misc|sound|ringer|mute|switch|objc_class' | head -n 350 || true
-            echo '-- related methods and preference keys --'
-            strings -a -t x "$f" | grep -Ei 'fake|swipe|ringer|mute|sound|disable|notification|volume|disabled|status|press|firstValue|secondValue|thirdValue|fourthValue|fifthValue|sixthValue|MiscSettings|plist|Preferences' | head -n 400 || true
-          done
-          echo '==== OBJC CLASS / SELECTOR / IMPORT METADATA ===='
-          python3 -m pip install --quiet lief capstone
-          python3 - <<'PY'
-          import lief
-          p='audit/pkg/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib'
-          m=lief.parse(p)
-          print('format',m.format,'arch',m.header.cpu_type)
-          print('sections',[(s.name,hex(s.virtual_address),len(s.content)) for s in m.sections])
-          print('symbol count',len(m.symbols))
-          for s in m.symbols:
-              if any(x in s.name.lower() for x in ('notification','volume','bulletin','fake','silent','mute','prefs','springboard','message','sound','ringer','objc_class_$_','objc_metaclass')):
-                  print('SYMBOL',hex(s.value),s.name)
-          for lib in m.libraries: print('LIB',lib.name)
-          try:
-              print('objc metadata', m.objc_metadata)
-          except Exception as e: print('objc metadata unsupported',str(e))
-          PY
-
-          echo '==== FAKE NOTIFICATION DISASSEMBLY ===='
-          python3 scripts/disassemble_audit.py
-
-          echo '==== CFSTRING AND INPUT BRANCH AUDIT ===='
-          python3 scripts/audit_cfstrings.py
-
-          echo '==== CORRECTED CFSTRING LOOKUP ===='
-          python3 scripts/audit_cfstrings.py
-
-          echo '==== HOOK SYMBOL EXPORT VERIFICATION ===='
-          python3 scripts/check-symbol.py
+          python3 -m pip install -q lief capstone
+          python3 scripts/inspect_toggle.py
