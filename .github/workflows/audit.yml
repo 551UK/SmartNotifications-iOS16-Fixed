@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/audit.yml'
       - 'scripts/patch_fake_inline.py'
+      - 'scripts/verify_fake_inline.py'
 permissions:
   contents: read
 jobs:
@@ -19,4 +20,5 @@ jobs:
           python3 -m pip install -q capstone keystone-engine
           mkdir -p extracted
           dpkg-deb -x input/smartnotificationsios16_v1.0_iphoneos-arm64.deb extracted
-          python3 scripts/patch_fake_inline.py extracted/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib /tmp/out --dry-run
+          python3 scripts/patch_fake_inline.py extracted/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib /tmp/out
+          python3 scripts/verify_fake_inline.py /tmp/out
