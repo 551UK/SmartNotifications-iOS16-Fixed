@@ -56,3 +56,6 @@ jobs:
 
           echo '==== CFSTRING AND INPUT BRANCH AUDIT ===='
           python3 scripts/audit_cfstrings.py
+
+          echo '==== CORRECTED CFSTRING LOOKUP ===='
+          python3 scripts/audit_cfstrings.py
