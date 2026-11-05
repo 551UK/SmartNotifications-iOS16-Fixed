@@ -1,22 +1,22 @@
-name: Inspect SmartNotifications toggle and runtime
+name: Verify in-place SmartNotifications fake toggle patch
 on:
   workflow_dispatch:
   push:
     paths:
       - '.github/workflows/audit.yml'
+      - 'scripts/patch_fake_inline.py'
 permissions:
   contents: read
 jobs:
-  audit:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Decode original compiled toggle code
-        shell: bash
+      - name: Verify original file layout, hook keys and branch targets
         run: |
           set -euo pipefail
-          mkdir -p audit/pkg
-          dpkg-deb -R input/smartnotificationsios16_v1.0_iphoneos-arm64.deb audit/pkg
-          python3 -m pip install -q lief capstone
-          python3 scripts/inspect_toggle.py
+          python3 -m pip install -q capstone keystone-engine
+          mkdir -p extracted
+          dpkg-deb -x input/smartnotificationsios16_v1.0_iphoneos-arm64.deb extracted
+          python3 scripts/patch_fake_inline.py extracted/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib /tmp/out --dry-run
