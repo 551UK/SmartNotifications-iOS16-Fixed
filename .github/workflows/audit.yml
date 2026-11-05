@@ -53,3 +53,6 @@ jobs:
 
           echo '==== FAKE NOTIFICATION DISASSEMBLY ===='
           python3 scripts/disassemble_audit.py
+
+          echo '==== CFSTRING AND INPUT BRANCH AUDIT ===='
+          python3 scripts/audit_cfstrings.py
