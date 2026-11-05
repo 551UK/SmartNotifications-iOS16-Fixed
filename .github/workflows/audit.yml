@@ -50,3 +50,6 @@ jobs:
               print('objc metadata', m.objc_metadata)
           except Exception as e: print('objc metadata unsupported',str(e))
           PY
+
+          echo '==== FAKE NOTIFICATION DISASSEMBLY ===='
+          python3 scripts/disassemble_audit.py
