@@ -61,11 +61,4 @@ jobs:
           python3 scripts/audit_cfstrings.py
 
           echo '==== HOOK SYMBOL EXPORT VERIFICATION ===='
-          python3 - <<'PY'
-          import lief
-          p='audit/pkg/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib'
-          for m in lief.MachO.parse(p):
-              for s in m.symbols:
-                  if 'sendBulletin' in s.name or 'MSHookFunction' in s.name:
-                      print('SYMBOL',m.header.cpu_type,s.name, 'value',hex(s.value), 'external',getattr(s,'is_external','unknown'), 'category',str(getattr(s,'category','unknown')))
-          PY
+          python3 scripts/check-symbol.py
