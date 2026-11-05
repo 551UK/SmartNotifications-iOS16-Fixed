@@ -1,0 +1,144 @@
+name: Build SmartNotifications 1.0.3 inline fake-toggle fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-inline-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch ORIGINAL binary only (no new injected tweak)
+        shell: bash
+        run: |
+          set -euo pipefail
+          orig=input/smartnotificationsios16_v1.0_iphoneos-arm64.deb
+          echo "74959924fb5eeac098fb7a7a51fd3d3295a646dd04d96349d9f2773d79ae9ef2  $orig" | sha256sum -c -
+          python3 -m pip install -q capstone keystone-engine
+          mkdir -p extracted patched
+          dpkg-deb -x "$orig" extracted
+          input=extracted/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib
+          output=patched/SmartNotificationsiOS16.dylib
+          test -s "$input"
+          python3 scripts/patch_fake_inline.py "$input" "$output"
+          python3 scripts/verify_fake_inline.py "$output"
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+          a=Path('extracted/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib').read_bytes()
+          b=Path('patched/SmartNotificationsiOS16.dylib').read_bytes()
+          assert len(a)==len(b), 'Unexpected Mach-O layout or size change'
+          assert a[:8]==b[:8] and a[8:48]==b[8:48]
+          changed=[i for i,(x,y) in enumerate(zip(a,b)) if x!=y]
+          assert changed and len(changed)<200, 'Unexpected nonlocal modifications'
+          print('PASS: unchanged original fat-Mach-O structure,',len(changed),'bytes modified exclusively in original sender & code cave')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patched-unsigned
+          path: patched/SmartNotificationsiOS16.dylib
+          if-no-files-found: error
+          retention-days: 2
+
+  sign:
+    needs: patch
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-unsigned
+          path: signed
+      - name: Re-sign both iOS Mach-O slices
+        shell: bash
+        run: |
+          set -euo pipefail
+          dylib=signed/SmartNotificationsiOS16.dylib
+          file "$dylib"
+          lipo -info "$dylib"
+          codesign --force --sign - --timestamp=none "$dylib"
+          codesign --verify --verbose=2 "$dylib"
+          lipo -info "$dylib"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patched-signed
+          path: signed/SmartNotificationsiOS16.dylib
+          if-no-files-found: error
+          retention-days: 2
+
+  release:
+    needs: sign
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-signed
+          path: signed
+      - name: Build one package from clean stable 1.0.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p baseline dist
+          sh scripts/build.sh input/smartnotificationsios16_v1.0_iphoneos-arm64.deb baseline
+          base=baseline/SmartNotifications-iOS16-Fixed_1.0.1_iphoneos-arm64.deb
+          dpkg-deb -R "$base" package
+          dylib=package/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib
+          test -s signed/SmartNotificationsiOS16.dylib
+          cp signed/SmartNotificationsiOS16.dylib "$dylib"
+          chmod 0644 "$dylib"
+          # The 1.0.2 helper was ineffective. Never ship its code or load filter.
+          if find package -iname '*FakeGuard*' | grep -q .; then
+            echo 'ERROR: obsolete guard remnants detected'
+            exit 1
+          fi
+          sed -i 's/^Version: 1\.0\.1$/Version: 1.0.3/' package/DEBIAN/control
+          grep -q '^Version: 1.0.3$' package/DEBIAN/control
+          output=dist/SmartNotifications-iOS16-Fixed_1.0.3_iphoneos-arm64.deb
+          dpkg-deb --build --root-owner-group package "$output"
+          test "$(dpkg-deb -f "$output" Package)" = smartnotificationsios16
+          test "$(dpkg-deb -f "$output" Architecture)" = iphoneos-arm64
+          test "$(dpkg-deb -f "$output" Version)" = 1.0.3
+          mkdir -p verify/baseline verify/release
+          dpkg-deb -x "$base" verify/baseline
+          dpkg-deb -x "$output" verify/release
+          python3 - <<'PY'
+          from pathlib import Path
+          a=Path('verify/baseline'); b=Path('verify/release')
+          exe=Path('var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib')
+          originals={x.relative_to(a) for x in a.rglob('*') if x.is_file()}
+          releases={x.relative_to(b) for x in b.rglob('*') if x.is_file()}
+          assert originals==releases, ('Unexpected files', originals ^ releases)
+          for path in originals:
+              assert path==exe or (a/path).read_bytes()==(b/path).read_bytes(), f'Changed unrelated file: {path}'
+          assert (a/exe).read_bytes()!=(b/exe).read_bytes()
+          assert (b/exe).read_bytes()==Path('signed/SmartNotificationsiOS16.dylib').read_bytes()
+          print('PASS: ONLY original tweak binary altered; all other 1.0.1 files preserved.')
+          PY
+          sha256sum "$output"
+
+      - name: Replace old release asset, leave only 1.0.3
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=DEB
+          pkg=dist/SmartNotifications-iOS16-Fixed_1.0.3_iphoneos-arm64.deb
+          gh release upload "$tag" "$pkg" --clobber
+          keep="$(basename "$pkg")"
+          while IFS= read -r asset; do
+            if [[ -n "$asset" && "$asset" != "$keep" ]]; then
+              gh release delete-asset "$tag" "$asset" --yes
+            fi
+          done < <(gh release view "$tag" --json assets --jq '.assets[].name')
+          gh release edit "$tag" --title "SmartNotifications iOS16 Fixed" --notes ""
