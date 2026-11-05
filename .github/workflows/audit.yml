@@ -15,45 +15,22 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect bundled DEB and preference keys
+      - name: Inspect tweak binaries and switches
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p audit/pkg
           dpkg-deb -R input/smartnotificationsios16_v1.0_iphoneos-arm64.deb audit/pkg
-          echo '==== ALL FILES ===='
+          echo '==== ALL PACKAGE FILES ===='
           find audit/pkg -type f -printf '%p %s bytes\n' | sort
-          echo '==== MACHO LIBRARIES ===='
-          find audit/pkg -type f \( -name '*.dylib' -o -name '*.bundle' -o -name '*.appex' \) -print
-          echo '==== PREFERENCE DATA AND TOGGLE LABELS ===='
-          python3 - <<'PY'
-          import os, plistlib
-          for root, dirs, files in os.walk('audit/pkg'):
-              for fn in files:
-                  p=os.path.join(root,fn)
-                  if fn.endswith('.plist'):
-                      try:
-                          with open(p,'rb') as f: x=plistlib.load(f)
-                          print('\nFILE:',p, '\n',str(x)[:16000])
-                      except Exception as e: print('plist error',p,str(e))
-          PY
-          echo '==== NOTIFICATION STRINGS PER DYLIB/EXE ===='
-          find audit/pkg -type f -size +20k | while read -r file; do
-            if file "$file" | grep -qiE 'Mach-O|binary|data'; then
-              echo ">>> $file"
-              strings -a -t x "$file" | grep -Ei -C 2 'fakenoti|fakenotification|fake.?notification|silent.?mode|forcesound|sound.?enabled|enabled.?sound|swipe|respring|snooze|no.?sender|remove.?manage|block.?word|enable|prefs|notify' | head -n 470 || true
-            fi
-          done
           echo '==== MACHO EXPORTED SYMBOLS AND CLASSES ===='
           for f in audit/pkg/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib audit/pkg/var/jb/Library/PreferenceBundles/SmartNotifications.bundle/SmartNotifications; do
             echo "== $f =="
             file "$f"
             command -v llvm-objdump || true
             command -v llvm-nm || true
-            llvm-objdump --macho --syms "$f" 2>&1 | grep -Ei 'fake|noti|volume|bulletin|preference|misc|sound|ringer|mute|switch|objc_class|\[|_\
-          find audit/pkg -type f \( -name '*.plist' -o -name '*.strings' \) -printf '%p\n' | head -n 200
- | head -n 350 || true
-            echo '-- all methods/properties containing toggle or notify --'
+            llvm-objdump --macho --syms "$f" 2>&1 | grep -Ei 'fake|noti|volume|bulletin|preference|misc|sound|ringer|mute|switch|objc_class' | head -n 350 || true
+            echo '-- related methods and preference keys --'
             strings -a -t x "$f" | grep -Ei 'fake|swipe|ringer|mute|sound|disable|notification|volume|disabled|status|press|firstValue|secondValue|thirdValue|fourthValue|fifthValue|sixthValue|MiscSettings|plist|Preferences' | head -n 400 || true
           done
           echo '==== OBJC CLASS / SELECTOR / IMPORT METADATA ===='
@@ -73,5 +50,3 @@ jobs:
               print('objc metadata', m.objc_metadata)
           except Exception as e: print('objc metadata unsupported',str(e))
           PY
-          echo '==== CONTROL / FILTER BUNDLE DATA ===='
-          find audit/pkg -type f \( -name '*.plist' -o -name '*.strings' \) -printf '%p\n' | head -n 200
