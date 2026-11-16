@@ -1,0 +1,81 @@
+name: Build independent notification audio
+on:
+  push:
+    branches: [independent-volume-mute]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python3 -m pip install capstone keystone-engine unicorn
+          python3 -m unittest discover -s tests -v
+          mkdir -p patched extracted
+          dpkg-deb -x input/*.deb extracted
+          python3 scripts/patch_fake_inline.py extracted/var/jb/Library/MobileSubstrate/DynamicLibraries/SmartNotificationsiOS16.dylib patched/fake.dylib
+          python3 scripts/patch_audio.py patched/fake.dylib patched/SmartNotificationsiOS16.dylib
+          python3 scripts/verify_fake_inline.py patched/SmartNotificationsiOS16.dylib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patched-audio
+          path: patched/SmartNotificationsiOS16.dylib
+  sign:
+    needs: patch
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-audio
+          path: signed
+      - run: |
+          set -euo pipefail
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun clang -fobjc-arc -fblocks -dynamiclib -arch arm64 -arch arm64e -miphoneos-version-min=15.0 -isysroot "$SDK" -O2 -Wall -Werror -Wno-deprecated-declarations -framework Foundation -framework AVFoundation -o signed/SNIndependentAudio.dylib audio/SNAudio.m
+          xcrun clang -fobjc-arc -fblocks -dynamiclib -arch arm64 -arch arm64e -miphoneos-version-min=15.0 -isysroot "$SDK" -O2 -Wall -Werror -Wno-deprecated-declarations -framework Foundation -framework UIKit -o signed/SNAudioSettings.dylib audio/SNAudioSettings.m
+          for dylib in signed/*.dylib; do
+            codesign --force --sign - --timestamp=none "$dylib"
+            codesign --verify --strict --verbose=2 "$dylib"
+            lipo -verify_arch arm64 arm64e "$dylib"
+          done
+          shasum -a 256 signed/*.dylib > signed/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-audio
+          path: signed/
+  package:
+    needs: sign
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-audio
+          path: signed
+      - run: |
+          set -euo pipefail
+          sha256sum -c signed/SHA256SUMS
+          sh scripts/build.sh input/smartnotificationsios16_v1.0_iphoneos-arm64.deb baseline
+          dpkg-deb -R baseline/*.deb package
+          dyn=package/var/jb/Library/MobileSubstrate/DynamicLibraries
+          cp signed/*.dylib "$dyn/"
+          python3 - <<'PY'
+          import plistlib,pathlib
+          p=pathlib.Path('package/var/jb/Library/MobileSubstrate/DynamicLibraries')
+          for name,bundle in [('SNIndependentAudio','com.apple.springboard'),('SNAudioSettings','com.apple.Preferences')]:
+              (p/(name+'.plist')).write_bytes(plistlib.dumps({'Filter':{'Bundles':[bundle]}}))
+          for name in ('SmartNotificationsiOS16','SNIndependentAudio','SNAudioSettings'):
+              assert (p/(name+'.dylib')).read_bytes()==pathlib.Path('signed',name+'.dylib').read_bytes()
+          PY
+          sed -i 's/^Version: 1.0.1$/Version: 1.0.6~audio1/' package/DEBIAN/control
+          chmod 644 "$dyn"/*.dylib "$dyn"/*.plist
+          mkdir -p dist
+          dpkg-deb --build --root-owner-group package dist/SmartNotifications_1.0.6~audio1_iphoneos-arm64.deb
+          sha256sum dist/*.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SmartNotifications-independent-audio
+          path: dist/*.deb
