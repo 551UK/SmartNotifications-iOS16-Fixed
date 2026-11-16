@@ -21,7 +21,7 @@
 - (void)stop;
 @end
 
-static void SNPlayAlert(NSURL *url, NSDictionary *prefs) {
+static void SNPlayAlert(NSURL *url, NSDictionary *prefs, NSTimeInterval duration) {
     // All alert ownership is main-queue confined; each event has its own snapshot.
     NSCAssert([NSThread isMainThread], @"main queue required");
     static NSMutableSet *active;
@@ -65,11 +65,11 @@ static void SNPlayAlert(NSURL *url, NSDictionary *prefs) {
         // Bound lifetime and concurrency without depending on private completion ABI.
         if (active.count>=8) return;
         [active addObject:alert];
-        [alert play];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,31*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)((duration+1)*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
             @try { [alert stop]; } @catch (NSException *e) { NSLog(@"[SNAudio] stop: %@",e.name); }
             [active removeObject:alert];
         });
+        [alert play];
     } @catch (NSException *e) { NSLog(@"[SNAudio] playback: %@",e.name); }
 }
 
@@ -86,7 +86,8 @@ static void SNPlayAlert(NSURL *url, NSDictionary *prefs) {
     NSString *root=@"/var/jb/Library/Application Support/SmartNotifications/";
     if (![url.path.stringByStandardizingPath hasPrefix:root]) return NO;
     NSDictionary *snapshot=[prefs copy];
-    dispatch_async(dispatch_get_main_queue(),^{ SNPlayAlert(url,snapshot); });
+    NSTimeInterval duration=self.duration;
+    dispatch_async(dispatch_get_main_queue(),^{ SNPlayAlert(url,snapshot,duration); });
     return YES;
 }
 @end
