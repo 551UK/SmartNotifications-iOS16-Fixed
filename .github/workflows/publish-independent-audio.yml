@@ -1,0 +1,30 @@
+name: Upload independent audio DEB
+on:
+  push:
+    branches: [independent-volume-mute]
+    paths: ['.github/workflows/publish-independent-audio.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: SmartNotifications-independent-audio
+          path: dist
+          repository: 551UK/SmartNotifications-iOS16-Fixed
+          run-id: 43867585263
+          github-token: ${{ github.token }}
+      - name: Verify and upload branch package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: 551UK/SmartNotifications-iOS16-Fixed
+        run: |
+          set -euo pipefail
+          pkg='dist/SmartNotifications_1.0.6~audio1_iphoneos-arm64.deb'
+          echo "e4055a407c618b17ed9833597f9d40b62c5bfa1bc4d70bc4e0561e0236869708  $pkg" | sha256sum -c -
+          test "$(dpkg-deb -f "$pkg" Version)" = '1.0.6~audio1'
+          test "$(dpkg-deb -f "$pkg" Architecture)" = 'iphoneos-arm64'
+          gh release create independent-audio-1.0.6-audio1 "$pkg" --target f1e107cdb37a8add36045616ba59fc56ca0d7fe7 --prerelease --title "SmartNotifications — Independent Audio" --notes "Per-app notification volume and mute bypass. Separate branch build."
