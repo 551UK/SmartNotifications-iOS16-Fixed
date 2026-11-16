@@ -85,6 +85,7 @@ static NSString *const SNDirectory=@"/var/jb/Library/Application Support/SmartNo
 @end
 
 static IMP oldAppear;
+static IMP oldBypass;
 static char pathKey;
 static void OpenAudio(UIViewController *controller,SEL cmd,id sender) {
     NSString *path=objc_getAssociatedObject(controller,&pathKey);
@@ -107,6 +108,30 @@ static void DetailAppeared(UIViewController *controller,SEL cmd,BOOL animated) {
     [items addObject:[[UIBarButtonItem alloc] initWithTitle:@"Audio" style:UIBarButtonItemStylePlain target:controller action:@selector(snOpenAudio:)]];
     controller.navigationItem.rightBarButtonItems=items;
 }
+static void BypassChanged(id controller,SEL cmd,UISwitch *sender) {
+    ((void(*)(id,SEL,id))oldBypass)(controller,cmd,sender);
+    if (!sender.on || ![controller respondsToSelector:NSSelectorFromString(@"datesPlistPath")]) return;
+    NSString *path=((id(*)(id,SEL))objc_msgSend)(controller,NSSelectorFromString(@"datesPlistPath"));
+    if (![path isKindOfClass:NSString.class] || ![path hasPrefix:SNDirectory]) return;
+    SNAudioSettings *settings=[SNAudioSettings new];
+    settings.path=path;
+    // The original bypass switch must work even before a custom tone is chosen.
+    NSMutableDictionary *prefs=[[settings settings] mutableCopy];
+    prefs[@"firstValue"]=@YES;
+    if (![prefs[@"NotificationAlert"] length]) prefs[@"NotificationAlert"]=@"alert.mp3";
+    if ([prefs writeToFile:path atomically:YES]) {
+        SEL enable=NSSelectorFromString(@"updateSwitchAtIndexPath:");
+        if ([controller respondsToSelector:enable]) {
+            UISwitch *on=[UISwitch new]; on.on=YES;
+            ((void(*)(id,SEL,id))objc_msgSend)(controller,enable,on);
+        }
+        if ([controller isKindOfClass:UITableViewController.class]) [[controller tableView] reloadData];
+    } else {
+        UIAlertController *error=[UIAlertController alertControllerWithTitle:@"Could not save" message:@"Reinstall SmartNotifications to repair its settings folder permissions." preferredStyle:UIAlertControllerStyleAlert];
+        [error addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [controller presentViewController:error animated:YES completion:nil];
+    }
+}
 static void InstallDetailUI(void) {
     static BOOL installed;
     if (installed) return;
@@ -119,6 +144,8 @@ static void InstallDetailUI(void) {
     // Add an override on this class, never mutate UIViewController's inherited method.
     if (!class_addMethod(cls,@selector(viewDidAppear:),(IMP)DetailAppeared,method_getTypeEncoding(appear)))
         oldAppear=method_setImplementation(class_getInstanceMethod(cls,@selector(viewDidAppear:)),(IMP)DetailAppeared);
+    Method bypass=class_getInstanceMethod(cls,NSSelectorFromString(@"updateSwitchAtIndexPath2:"));
+    if (bypass) oldBypass=method_setImplementation(bypass,(IMP)BypassChanged);
     installed=YES;
 }
 __attribute__((constructor)) static void InstallSettings(void) {
