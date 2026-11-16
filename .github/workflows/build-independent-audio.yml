@@ -39,7 +39,7 @@ jobs:
           for dylib in signed/*.dylib; do
             codesign --force --sign - --timestamp=none "$dylib"
             codesign --verify --strict --verbose=2 "$dylib"
-            lipo -verify_arch arm64 arm64e "$dylib"
+            lipo "$dylib" -verify_arch arm64 arm64e
           done
           shasum -a 256 signed/*.dylib > signed/SHA256SUMS
       - uses: actions/upload-artifact@v4
